@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 👤 Users collection
+    match /users/{userId} {
+      allow get: if request.auth != null &&
+        (request.auth.uid == userId ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']);
+
+      allow list: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+
+      allow create: if request.auth != null &&
+        (request.auth.uid == userId ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']) &&
+        isValidUser();
+
+      allow update: if request.auth != null &&
+        (request.auth.uid == userId ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']) &&
+        (isValidEmailUpdate() || isValidLastActiveUpdate() || isValidStudentUpdate()) &&
+        isValidUser();
+
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+
+      function isValidUser() {
+        return request.resource.data.name is string &&
+          request.resource.data.name.size() >= 2 &&
+          request.resource.data.email.matches('^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$') &&
+          request.resource.data.role in ['admin', 'staff', 'student'] &&
+          (request.resource.data.lastActive == null || request.resource.data.lastActive is timestamp);
+      }
+
+      function isValidEmailUpdate() {
+        return request.resource.data.email == resource.data.email ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'] ||
+          (request.auth.uid == userId &&
+           request.auth.token.email_verified &&
+           request.resource.data.email.matches('^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$'));
+      }
+
+      function isValidLastActiveUpdate() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActive']) &&
+          request.resource.data.lastActive is timestamp &&
+          request.resource.data.lastActive <= request.time;
+      }
+
+      function isValidStudentUpdate() {
+        return request.auth.uid == userId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActive']) &&
+          request.resource.data.lastActive is timestamp &&
+          request.resource.data.lastActive <= request.time;
+      }
+    }
+
+    // 📋 Tasks collection
+    match /tasks/{taskId} {
+      allow get, list: if request.auth != null &&
+        (request.auth.uid in resource.data.assignedTo ||
+         resource.data.assignedTo.size() == 0 ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']);
+
+      allow create: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+
+      allow update: if request.auth != null &&
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'] ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completedBy', 'status']) &&
+            request.auth.uid in resource.data.assignedTo
+          )
+        );
+
+      // ✅ Updated delete rule to support staff with permission
+      allow delete: if request.auth != null &&
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.taskDeletePermission == true
+        );
+    }
+
+    // 🕓 Attendance collection
+    match /attendance/{recordId} {
+      allow list: if request.auth != null;
+
+      allow get, read: if request.auth != null &&
+        (resource.data.userId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']);
+
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.date is string &&
+        request.resource.data.timeIn is timestamp &&
+        request.resource.data.status in ['present', 'late'];
+
+      allow update: if request.auth != null &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['timeOut']) &&
+        request.resource.data.timeOut is timestamp &&
+        request.resource.data.timeOut >= resource.data.timeIn;
+
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    // 🕘 Task History
+    match /taskHistory/{historyId} {
+      allow get, list: if request.auth != null &&
+        (resource.data.userId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']);
+
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    // 🛡️ Login History
+    match /loginHistory/{entryId} {
+      allow get, list: if request.auth != null &&
+        (resource.data.userId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']);
+
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    // ⏱️ Minute Trackers
+    match /minuteTrackers/{trackerId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    match /minuteTrackerHistory/{historyId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    match /minuteTrackerTasks/{taskId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+
+    // 🔐 Password Resets
+    match /passwordResets/{resetId} {
+      allow create: if request.auth == null &&
+        request.resource.data.email.matches('^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$');
+
+      allow read, delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff'];
+    }
+  }
+}
